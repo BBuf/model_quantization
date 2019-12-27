@@ -1,18 +1,18 @@
 #coding=utf-8
 import re
 import tensorflow as tf
-import  tensorflow.contrib.slim as slim
+import tensorflow.contrib.slim as slim
+from tensorflow.contrib.slim import get_variables_to_restore
 import tensorflow.examples.tutorials.mnist.input_data as input_data
 
 # 参数设置
 KEEP_PROB = 0.5
 LEARNING_RATE = 1e-5
-BATCH_SIZE = 20
-PARAMETER_FILE = "checkpoint/variable.ckpt-20000"
-MAX_ITER = 20000
+BATCH_SIZE = 30
+PARAMETER_FILE = "checkpoint/variable.ckpt-100000"
+MAX_ITER = 100000
 
 # Build LeNet
-
 class Lenet:
     def __init__(self, is_train=True):
         self.raw_input_image = tf.placeholder(tf.float32, [None, 784], "inputs")
@@ -50,8 +50,18 @@ class Lenet:
             digits = slim.fully_connected(net, 10, scope='fc9')
         return digits
 
+def convert_to_tflite():
+    saved_model_dir = "./pb_model"
+    converter = tf.lite.TFLiteConverter.from_saved_model(saved_model_dir,
+                                                     input_arrays=["inputs"],
+                                                     input_shapes={"inputs": [1, 784]},
+                                                     output_arrays=["predictions"])
+    converter.optimizations = ["DEFAULT"]
+    converter.post_training_quantize = True
+    tflite_model = converter.convert()
+    open("tflite_model_v3/eval_graph.tflite", "wb").write(tflite_model)
 
-def main():
+def train():
     mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
     test_images = mnist.test.images
     test_labels = mnist.test.labels
@@ -105,9 +115,14 @@ def main():
     legacy_init_op = tf.group(tf.tables_initializer(), name="legacy_init_op")
     builder.add_meta_graph_and_variables(sess, [tf.saved_model.tag_constants.SERVING],
                                          signature_def_map={"serving_default": prediction_signature},
-                                         legacy_init_op=legacy_init_op,
-                                         saver=saver)
+                                         legacy_init_op=legacy_init_op, saver=saver)
+    builder.save()
+
+
+# train.py 训练原始模型
+
 if __name__ == '__main__':
-    main()
+    # train()
+    convert_to_tflite()
 
 
