@@ -1,5 +1,7 @@
 #coding=utf-8
 import re
+import time
+import numpy as np
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
 from tensorflow.contrib.slim import get_variables_to_restore
@@ -9,7 +11,7 @@ import tensorflow.examples.tutorials.mnist.input_data as input_data
 KEEP_PROB = 0.5
 LEARNING_RATE = 1e-5
 BATCH_SIZE = 30
-PARAMETER_FILE = "checkpoint/variable.ckpt-100000"
+PARAMETER_FILE = "./checkpoint/variable.ckpt-100000"
 MAX_ITER = 100000
 
 # Build LeNet
@@ -50,16 +52,78 @@ class Lenet:
             digits = slim.fully_connected(net, 10, scope='fc9')
         return digits
 
+# 将Saved_Model转为tflite，调用的tf.lite.TFLiteConverter
 def convert_to_tflite():
     saved_model_dir = "./pb_model"
     converter = tf.lite.TFLiteConverter.from_saved_model(saved_model_dir,
                                                      input_arrays=["inputs"],
                                                      input_shapes={"inputs": [1, 784]},
                                                      output_arrays=["predictions"])
-    converter.optimizations = ["DEFAULT"]
     converter.post_training_quantize = True
     tflite_model = converter.convert()
-    open("tflite_model_v3/eval_graph.tflite", "wb").write(tflite_model)
+    open("tflite_model/eval_graph.tflite", "wb").write(tflite_model)
+
+# 使用原始的checkpoint进行预测
+def origin_predict():
+    mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
+    sess = tf.Session()
+    saver = tf.train.import_meta_graph("./checkpoint/variable.ckpt-100000.meta")
+    saver.restore(sess, "./checkpoint/variable.ckpt-100000")
+
+    input_node = sess.graph.get_tensor_by_name('inputs:0')
+    pred = sess.graph.get_tensor_by_name('predictions:0')
+    labels = [label.index(1) for label in mnist.test.labels.tolist()]
+    predictions = []
+    start_time = time.time()
+    for i in range(10):
+        for image in mnist.test.images:
+            prediction = sess.run(pred, feed_dict={input_node: [image]}).tolist()[0]
+            predictions.append(prediction)
+    end_time = time.time()
+    correct = 0
+    for prediction, label in zip(predictions, labels):
+        if prediction == label:
+            correct += 1
+    print(correct / len(labels))
+    print((end_time - start_time))
+
+# 使用tflite进行预测
+def tflite_predict():
+    mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
+    labels = [label.index(1) for label in mnist.test.labels.tolist()]
+    images = mnist.test.images
+    #images = np.array(images, dtype="uint8")
+    # 根据tflite文件生成解析器
+    interpreter = tf.contrib.lite.Interpreter(model_path="tflite_model/eval_graph.tflite")
+    # 用allocate_tensors()分配内存
+    interpreter.allocate_tensors()
+    # 获取输入输出tensor
+    input_details = interpreter.get_input_details()
+    output_details = interpreter.get_output_details()
+
+    predictions = []
+    start_time = time.time()
+    for i in range(10):
+        for image in images:
+            # 填充输入tensor
+            interpreter.set_tensor(input_details[0]['index'], [image])
+            # 前向推理
+            interpreter.invoke()
+            # 获取输出tensor
+            score = interpreter.get_tensor(output_details[0]['index'])[0][0]
+            # # 结果去掉无用的维度
+            # result = np.squeeze(score)
+            # #print('result:{}'.format(result))
+            # # 输出结果是长度为10（对应0-9）的一维数据，最大值的下标就是预测的数字
+            predictions.append(score)
+    end_time = time.time()
+    correct = 0
+    for prediction, label in zip(predictions, labels):
+        if prediction == label:
+            correct += 1
+    print((end_time - start_time))
+    print(correct / len(labels))
+
 
 def train():
     mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
@@ -119,10 +183,9 @@ def train():
     builder.save()
 
 
-# train.py 训练原始模型
-
 if __name__ == '__main__':
-    # train()
+    #train()
     convert_to_tflite()
-
+    origin_predict()
+    tflite_predict()
 
